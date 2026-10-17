@@ -9,4 +9,5 @@ build/
 .cxx
 *.jks
 *.keystore
-DoctorCalendar.zip
+/PreviewsVersions/
+*.zip

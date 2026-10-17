@@ -47,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,6 +76,7 @@ fun DoctorCalScreen(vm: MainViewModel) {
     val backupBusy by vm.backupBusy.collectAsStateWithLifecycle()
     val syncProblems by vm.syncProblems.collectAsStateWithLifecycle()
 
+    val configuration = LocalConfiguration.current
     val snackbar = remember { SnackbarHostState() }
     var editing by remember { mutableStateOf<EditTarget?>(null) }
     var showSettings by remember { mutableStateOf(false) }
@@ -141,7 +143,10 @@ fun DoctorCalScreen(vm: MainViewModel) {
     ) { inner ->
         BoxWithConstraints(Modifier.padding(inner).fillMaxSize()) {
             val gap = 8.dp
-            val landscape = maxWidth > maxHeight
+            // Decide from the window size (configuration), never from this box: the on-screen keyboard shrinks
+            // the box, which used to flip a portrait phone into the landscape layout while typing. That rebuilt
+            // the notes field and closed the keyboard right after it opened.
+            val landscape = configuration.screenWidthDp > configuration.screenHeightDp
             when {
                 // Landscape (phone or tablet): 2x2 grid on the left, notes on the right.
                 landscape -> Row(
