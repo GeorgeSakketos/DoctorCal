@@ -24,12 +24,19 @@ Each appointment/therapy is a patient card (name + hour). Tap a card to edit/del
 The app reads and writes the **calendars stored on the phone** (Android's Calendar Provider). Android's own Google sync then carries them to and from Google Calendar, which is why no separate Google sign-in is needed. Requirements: the Google account is added on the phone and Calendar sync is on for it (*Android Settings → Passwords & accounts → Google → Account sync*).
 
 * **Push**: new/edited/deleted cards are written to the chosen calendar; the app then asks Android to sync the account straight away.
-* **Pull**: events from 30 days back to 120 days ahead are imported, and the app refreshes when the phone's calendar changes (for example an edit made on the web). Untagged events become appointments, placed in the morning or evening box by start time (evening start hour is configurable). All-day events are skipped.
+* **Pull**: events from 30 days back to 120 days ahead are imported, and events deleted in the calendar are removed from the app. Whenever the app opens (and on the sync button) it asks Android to fetch the latest from Google, waits for that to finish and reads the calendar again; it also refreshes whenever the phone's calendar changes while the app is running. Untagged events become appointments, placed in the morning or evening box by start time (evening start hour is configurable). All-day events are skipped.
 * Cards carry a small tag at the end of the event description (`[Doctor Calendar: therapy, morning]`) so type and shift survive reinstalls and other devices. It is visible in Google Calendar.
 * **Repeating events** are shown on each day they occur but are read-only in the app; change them in Google Calendar.
 * Deleting in either place deletes in the other. If both sides changed the same event, the local edit wins.
 * Background sync every 30 min while connected, also after each edit and on app start.
 * Daily notes are not part of the calendar sync; they are backed up to Drive instead.
+
+## If calendar sync doesn't work
+The app saves appointments into the calendar on the phone; **Android** then uploads them to Google. So there are two hops, and the app can only control the first:
+1. Open *⋮ → Settings*. Red warnings under the calendar name list what Android-side setting is blocking sync (automatic sync off, the calendar's own sync switch off, a phone-only calendar, or changes stuck waiting several minutes to upload). The same warning appears after tapping the sync button.
+2. Open the **Google Calendar** app (or calendar.google.com) and check the event appears there. If it is in Google Calendar on the phone but not on the web, Android hasn't uploaded it yet: check the phone's internet and *Settings → Passwords & accounts → your Google account → Account sync → Calendar*.
+3. On an emulator, use a **Google Play** system image, add the Google account, and open the Google Calendar app once so the account's calendar is created.
+4. Still stuck? In Android Studio's Logcat filter by `DoctorCal` and send the lines (`sync ok…`, `sync failed…`, `problems: …`).
 
 ## How the notes backup works
 * One JSON file (`doctorcal-notes.json`) that the user picked in the system file picker. The app only gets access to that single file, not to the rest of the Drive. Because it is a normal Drive file, it is visible in Drive and can be moved or deleted there (if so, tap *Change location*).

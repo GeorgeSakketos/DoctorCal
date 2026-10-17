@@ -9,6 +9,7 @@ import android.provider.CalendarContract.Instances
 import com.doctorcal.app.data.Entry
 import com.doctorcal.app.data.Kind
 import com.doctorcal.app.data.Shift
+import java.io.IOException
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -38,6 +39,9 @@ data class DeviceEvent(
     val kind: Kind?,
     val shift: Shift?,
 )
+
+/** Calendar-level switches that decide whether Android syncs a calendar with Google at all. */
+data class CalendarFlags(val visible: Boolean, val syncEvents: Boolean)
 
 /**
  * Reads and writes the calendars stored on the phone (Android's Calendar Provider).
@@ -83,9 +87,86 @@ class DeviceCalendar(private val resolver: ContentResolver) {
         )
     }
 
-    /** Timed events of [calendarId] that fall in the window; repeating events are expanded into occurrences. */
+    /** Events of the calendar that were added, edited or deleted on the phone and not yet uploaded to Google. */
+    fun pendingUploads(calendarId: Long): Int =
+        resolver.query(
+            Events.CONTENT_URI,
+            arrayOf(Events._ID),
+            "${Events.CALENDAR_ID} = ? AND ${Events.DIRTY} = 1",
+            arrayOf(calendarId.toString()),
+            null,
+        )?.use { it.count } ?: 0
+
+    fun flags(calendarId: Long): CalendarFlags? =
+        resolver.query(
+            ContentUris.withAppendedId(Calendars.CONTENT_URI, calendarId),
+            arrayOf(Calendars.VISIBLE, Calendars.SYNC_EVENTS),
+            null,
+            null,
+            null,
+        )?.use { c ->
+            if (c.moveToFirst()) CalendarFlags(visible = c.getInt(0) != 0, syncEvents = c.getInt(1) != 0) else null
+        }
+
+    /**
+     * Timed events of [calendarId] starting inside the window; repeating events are expanded into occurrences.
+     * Throws when the phone's calendar can't be read, so a failed read is never mistaken for "everything was deleted".
+     */
     fun events(calendarId: Long, fromMs: Long, toMs: Long): List<DeviceEvent> {
-        val repeating = repeatingEventIds(calendarId)
+        val (single, repeating) = loadEvents(calendarId, fromMs, toMs)
+        return single + repeatingOccurrences(repeating, calendarId, fromMs, toMs)
+    }
+
+    /** One-off events straight from the Events table (works even if the calendar is hidden), plus the ids of repeating events. */
+    private fun loadEvents(calendarId: Long, fromMs: Long, toMs: Long): Pair<List<DeviceEvent>, Set<Long>> {
+        val projection = arrayOf(
+            Events._ID,
+            Events.TITLE,
+            Events.DESCRIPTION,
+            Events.DTSTART,
+            Events.DTEND,
+            Events.RRULE,
+            Events.RDATE,
+        )
+        val cursor = resolver.query(
+            Events.CONTENT_URI,
+            projection,
+            "${Events.CALENDAR_ID} = ? AND ${Events.DELETED} = 0 AND ${Events.ALL_DAY} = 0 AND " +
+                "(${Events.STATUS} IS NULL OR ${Events.STATUS} != ?)",
+            arrayOf(calendarId.toString(), Events.STATUS_CANCELED.toString()),
+            "${Events.DTSTART} ASC",
+        ) ?: throw IOException("The phone's calendar is not available right now")
+
+        val single = mutableListOf<DeviceEvent>()
+        val repeating = mutableSetOf<Long>()
+        cursor.use { c ->
+            while (c.moveToNext()) {
+                val id = c.getLong(0)
+                if (!c.getString(5).isNullOrBlank() || !c.getString(6).isNullOrBlank()) {
+                    repeating += id
+                    continue
+                }
+                val start = c.getLong(3)
+                if (start < fromMs || start >= toMs) continue
+                val end = if (c.isNull(4)) start + DEFAULT_LENGTH_MS else c.getLong(4)
+                val (details, kind, shift) = decodeDescription(c.getString(2))
+                single += DeviceEvent(
+                    key = id.toString(),
+                    title = c.getString(1).orEmpty().ifBlank { "(no title)" },
+                    description = details,
+                    startMs = start,
+                    endMs = end,
+                    kind = kind,
+                    shift = shift,
+                )
+            }
+        }
+        return single to repeating
+    }
+
+    /** Occurrences of repeating events. Android only expands these for calendars that are visible. */
+    private fun repeatingOccurrences(repeating: Set<Long>, calendarId: Long, fromMs: Long, toMs: Long): List<DeviceEvent> {
+        if (repeating.isEmpty()) return emptyList()
         val uri = Instances.CONTENT_URI.buildUpon().also {
             ContentUris.appendId(it, fromMs)
             ContentUris.appendId(it, toMs)
@@ -98,21 +179,23 @@ class DeviceCalendar(private val resolver: ContentResolver) {
             Instances.END,
             Instances.ALL_DAY,
         )
-        val out = mutableListOf<DeviceEvent>()
-        resolver.query(
+        val cursor = resolver.query(
             uri,
             projection,
             "${Events.CALENDAR_ID} = ?",
             arrayOf(calendarId.toString()),
             "${Instances.BEGIN} ASC",
-        )?.use { c ->
+        ) ?: throw IOException("The phone's calendar is not available right now")
+
+        val out = mutableListOf<DeviceEvent>()
+        cursor.use { c ->
             while (c.moveToNext()) {
-                if (c.getInt(5) == 1) continue // all-day events don't map to a timed card
                 val id = c.getLong(0)
+                if (id !in repeating || c.getInt(5) == 1) continue
                 val begin = c.getLong(3)
                 val (details, kind, shift) = decodeDescription(c.getString(2))
                 out += DeviceEvent(
-                    key = if (id in repeating) "$id@$begin" else id.toString(),
+                    key = "$id@$begin",
                     title = c.getString(1).orEmpty().ifBlank { "(no title)" },
                     description = details,
                     startMs = begin,
@@ -123,19 +206,6 @@ class DeviceCalendar(private val resolver: ContentResolver) {
             }
         }
         return out
-    }
-
-    private fun repeatingEventIds(calendarId: Long): Set<Long> {
-        val ids = mutableSetOf<Long>()
-        resolver.query(
-            Events.CONTENT_URI,
-            arrayOf(Events._ID),
-            "${Events.CALENDAR_ID} = ? AND ${Events.DELETED} = 0 AND " +
-                "(${Events.RRULE} IS NOT NULL OR ${Events.RDATE} IS NOT NULL)",
-            arrayOf(calendarId.toString()),
-            null,
-        )?.use { while (it.moveToNext()) ids += it.getLong(0) }
-        return ids
     }
 
     /** Returns the new event's row id, or null if the provider refused the insert. */
@@ -177,6 +247,8 @@ class DeviceCalendar(private val resolver: ContentResolver) {
     }
 
     private companion object {
+        const val DEFAULT_LENGTH_MS = 30 * 60_000L
+
         // The calendar provider only lets sync adapters store hidden extra properties, so the card's type and
         // shift travel as a short tag at the end of the description. It survives reinstalls and other devices.
         val TAG = Regex("""\s*\[Doctor Calendar: (appointment|therapy), (morning|evening)]\s*$""")

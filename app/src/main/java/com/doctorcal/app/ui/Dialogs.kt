@@ -189,6 +189,7 @@ fun EntryDialog(
 fun SettingsDialog(
     state: SettingsState,
     calendars: List<CalendarInfo>,
+    problems: List<String>,
     onDismiss: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
@@ -238,6 +239,9 @@ fun SettingsDialog(
                         "Syncing with ${state.calendarName}" +
                             if (state.account.isNotBlank() && state.account != state.calendarName) " (${state.account})" else "",
                     )
+                    problems.forEach {
+                        Text("⚠ $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
                     if (state.lastSyncAt > 0) {
                         Text(
                             "Last sync: " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(state.lastSyncAt)),

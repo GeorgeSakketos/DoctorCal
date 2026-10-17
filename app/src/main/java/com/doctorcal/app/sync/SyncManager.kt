@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.CalendarContract
+import android.util.Log
 import androidx.core.content.ContextCompat
 import com.doctorcal.app.Prefs
 import com.doctorcal.app.data.AppDatabase
@@ -16,6 +17,7 @@ import com.doctorcal.app.data.Shift
 import com.doctorcal.app.data.isRepeating
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -57,8 +59,47 @@ class SyncManager(
         if (hasPermission()) DeviceCalendar(context.contentResolver).calendars() else emptyList()
     }
 
-    /** [requestRemote] also asks Android to sync the Google account right now so fresh changes arrive from Google. */
+    /**
+     * [requestRemote] also asks Android to sync the Google account right now and, once that sync has finished,
+     * reads the phone's calendar again. That is what makes changes made elsewhere (new events, edits and
+     * deletions on the web or on another device) show up without waiting for Android's own schedule.
+     */
     suspend fun sync(requestRemote: Boolean = false): SyncOutcome {
+        val first = syncOnce(requestRemote)
+        if (!requestRemote || first !is SyncOutcome.Ok) return first
+        if (!awaitGoogleSync()) return first
+        val second = syncOnce(requestRemote = false)
+        return if (second is SyncOutcome.Ok) {
+            SyncOutcome.Ok(first.pushed + second.pushed, first.pulled + second.pulled)
+        } else {
+            first
+        }
+    }
+
+    /** Waits (at most ~15 s) until Android's Calendar sync for the account is no longer running. */
+    private suspend fun awaitGoogleSync(): Boolean {
+        val name = prefs.accountName
+        val type = prefs.accountType
+        if (name.isBlank() || type.isBlank()) return false
+        val account = Account(name, type)
+        return try {
+            delay(1_000) // give Android a moment to start the requested sync
+            var waited = 0L
+            while (waited < MAX_SYNC_WAIT_MS &&
+                (ContentResolver.isSyncActive(account, CalendarContract.AUTHORITY) ||
+                    ContentResolver.isSyncPending(account, CalendarContract.AUTHORITY))
+            ) {
+                delay(500)
+                waited += 500
+            }
+            true
+        } catch (e: SecurityException) {
+            Log.w(TAG, "cannot read sync status", e)
+            false
+        }
+    }
+
+    private suspend fun syncOnce(requestRemote: Boolean): SyncOutcome {
         val calendarId = prefs.calendarId
         if (!prefs.connected || calendarId < 0) return SyncOutcome.NotConnected
         if (!hasPermission()) return SyncOutcome.NeedsPermission
@@ -70,16 +111,80 @@ class SyncManager(
                     val pulled = pull(calendar, calendarId)
                     prefs.lastSyncAt = System.currentTimeMillis()
                     if (pushed > 0 || requestRemote) requestGoogleSync()
+                    Log.i(TAG, "sync ok: calendar=$calendarId pushed=$pushed pulled=$pulled")
                     SyncOutcome.Ok(pushed, pulled)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: SecurityException) {
+                    Log.w(TAG, "sync: calendar permission missing", e)
                     SyncOutcome.NeedsPermission
                 } catch (e: Exception) {
+                    Log.w(TAG, "sync failed", e)
                     SyncOutcome.Error(e.message ?: "Sync failed")
                 }
             }
         }
+    }
+
+    /**
+     * Things on the phone that stop Android from carrying our calendar to and from Google, in plain words.
+     * Empty = nothing wrong found. The app can't change these settings itself; the user has to.
+     */
+    suspend fun problems(): List<String> = withContext(Dispatchers.IO) {
+        if (!prefs.connected || prefs.calendarId < 0) return@withContext emptyList()
+        if (!hasPermission()) {
+            return@withContext listOf("Calendar permission is off. Allow it in Android Settings > Apps > Doctor Calendar > Permissions.")
+        }
+        val out = mutableListOf<String>()
+        val name = prefs.accountName
+        val type = prefs.accountType
+        if (type != GOOGLE_ACCOUNT_TYPE) {
+            out += "\"${prefs.calendarName}\" is stored only on this phone, so it never reaches Google Calendar. Choose a calendar of your Google account."
+        } else {
+            try {
+                if (!ContentResolver.getMasterSyncAutomatically()) {
+                    out += "Android's automatic sync is off. Turn on Settings > Passwords & accounts > Automatically sync data."
+                }
+                // This flag has been seen to read "off" while Settings shows Calendar sync on, so it is only
+                // written to the log for diagnosis and never shown as a warning.
+                Log.i(
+                    TAG,
+                    "account sync flag for $name: " +
+                        ContentResolver.getSyncAutomatically(Account(name, type), CalendarContract.AUTHORITY),
+                )
+            } catch (e: SecurityException) {
+                Log.w(TAG, "cannot read sync settings", e)
+            }
+            // What really matters: do our changes reach Google? Changes Android hasn't uploaded yet stay "dirty".
+            // A few minutes of that is normal (offline, batching); longer than that means sync is not running.
+            try {
+                val pending = DeviceCalendar(context.contentResolver).pendingUploads(prefs.calendarId)
+                if (pending == 0) {
+                    prefs.pendingSince = 0L
+                } else {
+                    val now = System.currentTimeMillis()
+                    if (prefs.pendingSince == 0L) prefs.pendingSince = now
+                    if (now - prefs.pendingSince > PENDING_WARN_MS) {
+                        out += "$pending change(s) have been waiting for several minutes to reach Google. " +
+                            "Check the phone's internet connection and Settings > Passwords & accounts > $name > Account sync."
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "cannot read pending uploads", e)
+            }
+        }
+        try {
+            val flags = DeviceCalendar(context.contentResolver).flags(prefs.calendarId)
+            when {
+                flags == null -> out += "The selected calendar no longer exists on this phone. Choose a calendar again in Settings."
+                !flags.syncEvents -> out += "Android isn't syncing \"${prefs.calendarName}\" with Google. In the Google Calendar app open Settings, pick the account and this calendar, and turn on Sync."
+                !flags.visible -> out += "\"${prefs.calendarName}\" is hidden in the Google Calendar app. Show it there so repeating events can be read."
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "cannot read calendar flags", e)
+        }
+        Log.i(TAG, "problems: $out")
+        out
     }
 
     /** Best effort: nudge Android's Google Calendar sync instead of waiting for its next scheduled run. */
@@ -149,6 +254,7 @@ class SyncManager(
         )
 
         var changed = 0
+        var removed = 0
         for (r in remote) {
             val local = dao.byGoogleId(r.key)
             if (local?.dirty == true) continue // local edits are pushed first; never overwrite them here
@@ -181,8 +287,10 @@ class SyncManager(
             if (l.googleEventId !in remoteKeys) {
                 dao.hardDelete(l.id)
                 changed++
+                removed++
             }
         }
+        Log.i(TAG, "pull: calendar=$calendarId onPhone=${remote.size} changed=$changed removed=$removed")
         return changed
     }
 
@@ -190,6 +298,9 @@ class SyncManager(
         if (minute < prefs.eveningStartHour * 60) Shift.MORNING else Shift.EVENING
 
     private companion object {
+        const val TAG = "DoctorCal"
+        const val MAX_SYNC_WAIT_MS = 15_000L
+        const val PENDING_WARN_MS = 3 * 60_000L
         const val PULL_DAYS_BACK = 30L
         const val PULL_DAYS_AHEAD = 120L
     }

@@ -92,6 +92,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _syncing = MutableStateFlow(false)
     val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
 
+    /** Android-side reasons the calendar can't reach Google (sync switched off, local-only calendar, ...). */
+    private val _syncProblems = MutableStateFlow<List<String>>(emptyList())
+    val syncProblems: StateFlow<List<String>> = _syncProblems.asStateFlow()
+
     private val _update = MutableStateFlow<UpdateUi>(UpdateUi.Idle)
     val update: StateFlow<UpdateUi> = _update.asStateFlow()
 
@@ -118,11 +122,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var lastForegroundSync = 0L
+
+    /** Called whenever the app comes to the front: pick up whatever changed in Google Calendar meanwhile. */
+    fun onForeground() {
+        val now = System.currentTimeMillis()
+        if (!prefs.connected || !prefs.autoSync || now - lastForegroundSync < 20_000) return
+        lastForegroundSync = now
+        startObserving()
+        sync(manual = false, askGoogle = true)
+    }
+
     init {
-        if (prefs.connected) {
-            startObserving()
-            if (prefs.autoSync) sync(manual = false)
-        }
+        if (prefs.connected) startObserving()
         val sixHours = 6 * 60 * 60 * 1000L
         if (prefs.autoCheckUpdates && System.currentTimeMillis() - prefs.lastUpdateCheck > sixHours) {
             checkForUpdates(manual = false)
@@ -259,7 +271,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadCalendars() {
         if (!app.syncManager.hasPermission()) return
-        viewModelScope.launch { _calendars.value = app.syncManager.calendars() }
+        viewModelScope.launch {
+            _calendars.value = app.syncManager.calendars()
+            _syncProblems.value = app.syncManager.problems()
+        }
     }
 
     fun disconnect() {
@@ -267,6 +282,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         SyncWorker.schedule(app, false)
         stopObserving()
         _calendars.value = emptyList()
+        _syncProblems.value = emptyList()
         refreshSettings()
         message("Calendar sync is off. Your appointments stay on this device and in your calendar.")
     }
@@ -280,18 +296,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun sync(manual: Boolean = true) {
+    /**
+     * [askGoogle]: also ask Android to fetch the latest from Google first and re-read the calendar afterwards, so
+     * changes made on the web or another device (including deletions) arrive. Defaults to on for manual syncs.
+     */
+    fun sync(manual: Boolean = true, askGoogle: Boolean = manual) {
         if (!prefs.connected) {
             if (manual) message("Connect your calendar in Settings first")
             return
         }
         viewModelScope.launch {
-            _syncing.value = true
-            val outcome = app.syncManager.sync(requestRemote = manual)
+            if (manual) _syncing.value = true
+            val outcome = app.syncManager.sync(requestRemote = askGoogle)
             _syncing.value = false
+            val problems = app.syncManager.problems()
+            _syncProblems.value = problems
             when (outcome) {
                 is SyncOutcome.Ok -> if (manual) {
-                    message("Synced with ${prefs.calendarName}: ${outcome.pushed} sent, ${outcome.pulled} updated")
+                    // Saved on the phone is not the same as reaching Google: say so when Android won't carry it there.
+                    message(
+                        problems.firstOrNull()
+                            ?: "Synced with ${prefs.calendarName}: ${outcome.pushed} sent, ${outcome.pulled} updated",
+                    )
                 }
                 SyncOutcome.NeedsPermission -> if (manual) _needsPermission.value = true
                 is SyncOutcome.Error -> if (manual) message(outcome.message)

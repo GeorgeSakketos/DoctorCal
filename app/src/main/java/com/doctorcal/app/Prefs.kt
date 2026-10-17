@@ -51,6 +51,11 @@ class Prefs(context: Context) {
         get() = sp.getLong("lastSyncAt", 0L)
         set(v) = sp.edit { putLong("lastSyncAt", v) }
 
+    /** Since when changes have been waiting to be uploaded to Google (0 = nothing waiting). */
+    var pendingSince: Long
+        get() = sp.getLong("pendingSince", 0L)
+        set(v) = sp.edit { putLong("pendingSince", v) }
+
     var lastUpdateCheck: Long
         get() = sp.getLong("lastUpdateCheck", 0L)
         set(v) = sp.edit { putLong("lastUpdateCheck", v) }

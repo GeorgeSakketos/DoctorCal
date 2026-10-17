@@ -73,6 +73,7 @@ fun DoctorCalScreen(vm: MainViewModel) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val calendars by vm.calendars.collectAsStateWithLifecycle()
     val backupBusy by vm.backupBusy.collectAsStateWithLifecycle()
+    val syncProblems by vm.syncProblems.collectAsStateWithLifecycle()
 
     val snackbar = remember { SnackbarHostState() }
     var editing by remember { mutableStateOf<EditTarget?>(null) }
@@ -196,6 +197,7 @@ fun DoctorCalScreen(vm: MainViewModel) {
         SettingsDialog(
             state = settings,
             calendars = calendars,
+            problems = syncProblems,
             onDismiss = { showSettings = false },
             onConnect = vm::connect,
             onDisconnect = vm::disconnect,
