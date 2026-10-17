@@ -1,62 +1,153 @@
-# Doctor Calendar (Android)
+# Doctor Calendar
 
-A personal calendar for a doctor: morning/evening **appointments**, morning/evening **therapy sessions**, and a **daily note**, synced with **Google Calendar**, with a **notes backup to Google Drive** and **self-update** from GitHub.
+Doctor Calendar is an Android app for managing a doctor's daily schedule:
 
-There is **no Google Cloud project, API key, OAuth client or SHA-1 to set up.** The app uses the Google account that is already signed in on the phone.
+- Morning and evening appointments
+- Morning and evening therapy sessions
+- One note for each day
+- Optional Google Calendar synchronization
+- Optional Google Drive backup for notes
+- GitHub-based in-app updates
 
-## Layout
+The app stores its data locally on the device. Google Calendar and Google Drive are optional integrations.
 
-| Screen | Layout |
-|---|---|
-| Landscape (phone or tablet) | 2×2 grid on the left (rows: appointments / therapy, columns: morning / evening), notes on the right |
-| Tablet portrait (width ≥ 600 dp) | 2×2 grid on top, notes underneath |
-| Phone portrait | One scrolling column: 4 sections, then notes |
+## Requirements
 
-Each appointment/therapy is a patient card (name + hour). Tap a card to edit/delete, tap **+** in a box to add. Use ‹ › or tap the date to change day.
+- Android 8.0 or later (API 26+)
+- A Google account added to the device for Calendar sync
+- The Google Calendar app or Android Calendar sync enabled for Calendar integration
+- The Google Drive app installed and signed in for note backups
 
-## Using it (the doctor's side)
+## Download
 
-1. **Google Calendar:** open *⋮ → Settings → Connect calendar*, allow the calendar permission, done. The app picks the Google account's main calendar; you can switch to another in the same screen. If the phone has no Google account yet, tap *Add Google account to this phone* and sign in with Android's normal login screen.
-2. **Notes backup:** *Settings → Back up now* (or switch on *Back up automatically*). Android's file picker opens once: choose **Google Drive**, a folder, and Save. From then on the app refreshes that same file (daily if automatic backup is on).
-3. **New phone / reinstall:** *Settings → I already have a backup: choose it*, pick the file in Drive.
+Download the latest APK from the [`appUpdate` release](https://github.com/GeorgeSakketos/DoctorCal/releases/tag/appUpdate).
 
-## How the calendar sync works
-The app reads and writes the **calendars stored on the phone** (Android's Calendar Provider). Android's own Google sync then carries them to and from Google Calendar, which is why no separate Google sign-in is needed. Requirements: the Google account is added on the phone and Calendar sync is on for it (*Android Settings → Passwords & accounts → Google → Account sync*).
+Android may ask you to allow this app to install unknown apps. Updates are signed with the same release key as the installed version.
 
-* **Push**: new/edited/deleted cards are written to the chosen calendar; the app then asks Android to sync the account straight away.
-* **Pull**: events from 30 days back to 120 days ahead are imported, and events deleted in the calendar are removed from the app. Whenever the app opens (and on the sync button) it asks Android to fetch the latest from Google, waits for that to finish and reads the calendar again; it also refreshes whenever the phone's calendar changes while the app is running. Untagged events become appointments, placed in the morning or evening box by start time (evening start hour is configurable). All-day events are skipped.
-* Cards carry a small tag at the end of the event description (`[Doctor Calendar: therapy, morning]`) so type and shift survive reinstalls and other devices. It is visible in Google Calendar.
-* **Repeating events** are shown on each day they occur but are read-only in the app; change them in Google Calendar.
-* Deleting in either place deletes in the other. If both sides changed the same event, the local edit wins.
-* Background sync every 30 min while connected, also after each edit and on app start.
-* Daily notes are not part of the calendar sync; they are backed up to Drive instead.
+## Getting started
 
-## If calendar sync doesn't work
-The app saves appointments into the calendar on the phone; **Android** then uploads them to Google. So there are two hops, and the app can only control the first:
-1. Open *⋮ → Settings*. Red warnings under the calendar name list what Android-side setting is blocking sync (automatic sync off, the calendar's own sync switch off, a phone-only calendar, or changes stuck waiting several minutes to upload). The same warning appears after tapping the sync button.
-2. Open the **Google Calendar** app (or calendar.google.com) and check the event appears there. If it is in Google Calendar on the phone but not on the web, Android hasn't uploaded it yet: check the phone's internet and *Settings → Passwords & accounts → your Google account → Account sync → Calendar*.
-3. On an emulator, use a **Google Play** system image, add the Google account, and open the Google Calendar app once so the account's calendar is created.
-4. Still stuck? In Android Studio's Logcat filter by `DoctorCal` and send the lines (`sync ok…`, `sync failed…`, `problems: …`).
+### Add appointments and therapy sessions
 
-## How the notes backup works
-* One JSON file (`doctorcal-notes.json`) that the user picked in the system file picker. The app only gets access to that single file, not to the rest of the Drive. Because it is a normal Drive file, it is visible in Drive and can be moved or deleted there (if so, tap *Change location*).
-* **Back up now** writes all non-empty notes to it. **Back up automatically (daily)** repeats it once a day while online and skips the write when no note changed.
-* **Restore** merges the file into the device: for each day the more recently edited note wins, and nothing local is ever deleted.
-* Needs the Google Drive app on the phone, signed in to the same account.
+The main screen contains four sections:
 
-## GitHub self-update setup (developer, one time)
+| | Morning | Evening |
+|---|---|---|
+| Appointments | Patient cards | Patient cards |
+| Therapy | Patient cards | Patient cards |
 
-1. Push this project to a **public** GitHub repository (the app reads the release without a token).
-2. Set `GITHUB_REPO=owner/name` in `gradle.properties` (or type it in the app under *Settings → Updates*).
-3. Create a signing key. It must never change, or updates will refuse to install:
-```bash
-keytool -genkeypair -v -keystore release.jks -alias doctorcal -keyalg RSA -keysize 2048 -validity 10000
-base64 -w0 release.jks     # value for KEYSTORE_BASE64
+Tap **+** to add a card. Tap an existing card to edit or delete it. Use the arrows or tap the date to move between days. Add or edit the day's note below the schedule.
+
+The layout adapts automatically:
+
+- **Phone portrait:** one scrolling column
+- **Tablet portrait:** schedule above the note
+- **Landscape:** schedule on the left and note on the right
+
+### Connect Google Calendar
+
+1. Open **⋮ → Settings → Connect calendar**.
+2. Allow calendar access.
+3. Select the calendar to use.
+
+The app uses calendars already available on the device. It does not need its own Google Cloud project, API key, OAuth client, or SHA-1 certificate. If the required Google account is not on the device, use **Add Google account to this phone** in the calendar settings.
+
+### Back up notes to Google Drive
+
+1. Open **⋮ → Settings → Back up now**.
+2. In Android's file picker, choose Google Drive, a folder, and a file location.
+3. Optionally enable **Back up automatically**.
+
+To restore on a new device, choose **I already have a backup** in Settings and select the backup file. Restore merges notes into the device; the newer version of a note wins, and existing local notes are never deleted.
+
+## Calendar synchronization
+
+Doctor Calendar reads and writes the Android Calendar Provider. Android's account synchronization then transfers those changes to and from Google Calendar.
+
+- New, edited, and deleted cards are pushed to the selected calendar.
+- The app pulls events from 30 days in the past through 120 days in the future.
+- Sync runs when the app opens, when you tap the sync button, after edits, when the device calendar changes, and periodically in the background.
+- Untagged timed events are imported as appointments. Their morning/evening section is determined by the configured evening start hour.
+- All-day events are ignored.
+- Repeating events are displayed but read-only in the app; edit them in Google Calendar.
+- Deleting an item in either place deletes it in the other.
+- If the same item changes in both places, the local edit takes precedence.
+
+Cards add a marker to the event description, such as `[Doctor Calendar: therapy, morning]`, so the card type and section can be restored after reinstalling or using another device.
+
+Daily notes are not stored in Google Calendar. They are included only in the Google Drive backup.
+
+## Notes backup
+
+The backup is one JSON file named `doctorcal-notes.json` at the location selected in Android's file picker. The app receives access only to that file.
+
+- **Back up now** writes all non-empty notes.
+- **Back up automatically** runs daily while the device is online and skips the upload when nothing changed.
+- **Restore** merges the backup into local notes.
+- If the file is moved or deleted in Drive, use **Change location** or select the backup again.
+
+## Troubleshooting calendar sync
+
+There are two synchronization steps: Doctor Calendar writes to the device calendar, then Android uploads that calendar to Google.
+
+1. Open **⋮ → Settings** and read any warning below the calendar name.
+2. Confirm that automatic account sync and the calendar's own sync switch are enabled:
+   **Android Settings → Passwords & accounts → Google → Account sync → Calendar**
+3. Check the event in the Google Calendar app and at [calendar.google.com](https://calendar.google.com).
+4. On an emulator, use a **Google Play** system image, add a Google account, and open Google Calendar once.
+5. If the issue persists, inspect Android Studio Logcat with the filter `DoctorCal` and look for `sync ok…`, `sync failed…`, or `problems: …`.
+
+## Building locally
+
+### Prerequisites
+
+- Android Studio Ladybug or newer
+- JDK 17
+- Android SDK 35
+
+The repository includes the Gradle wrapper, so no separate Gradle installation is required.
+
+Set the repository used by the in-app updater in `gradle.properties`:
+
+```properties
+GITHUB_REPO=GeorgeSakketos/DoctorCal
 ```
-Add these repository secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-4. Every push to `main` runs `.github/workflows/release.yml`, which builds a signed APK named `DoctorCalendar-<build>.apk` and republishes it as the release tagged **`appUpdate`**. Install the first APK manually from that release; after that the app updates itself.
 
-On start (at most every 6 h) and via *⋮ → Check for updates*, the app reads `https://api.github.com/repos/<repo>/releases/tags/appUpdate`, takes the highest `…-<number>.apk` asset and compares `<number>` with its own `versionCode`. If newer, it downloads the APK and opens Android's installer. Android always asks the user to confirm, and the first time it asks to allow "install unknown apps" for this app.
+Then build or install the debug app:
 
-## Build and test
-Open in Android Studio (Ladybug or newer); the Gradle wrapper (8.9) is included. Min Android 8.0 (API 26). To try calendar sync and the backup on an emulator, use a system image marked **Google Play**, add a Google account under *Settings → Passwords & accounts*, and install the Google Drive app from the Play Store for the backup.
+```bash
+./gradlew assembleDebug
+./gradlew installDebug
+```
+
+For calendar sync and Drive backup on an emulator, use a Google Play system image, add a Google account, and install Google Drive from the Play Store.
+
+## Release automation
+
+`.github/workflows/release.yml` builds and publishes a signed APK whenever `main` changes. It can also be started manually with `workflow_dispatch`.
+
+Configure these repository secrets before enabling signed releases:
+
+- `KEYSTORE_BASE64`
+- `KEYSTORE_PASSWORD`
+- `KEY_ALIAS`
+- `KEY_PASSWORD`
+
+The workflow:
+
+1. Builds the release APK with Java 17.
+2. Uses the GitHub Actions run number as the Android `versionCode`.
+3. Publishes `DoctorCalendar-<versionCode>.apk`.
+4. Replaces the GitHub release tagged `appUpdate`.
+
+The app checks that release at most every six hours, or when **⋮ → Check for updates** is selected. It offers the highest numbered APK when its version is newer than the installed version. Android always asks the user to confirm an update.
+
+Keep the signing key unchanged. Android will reject an update signed with a different key.
+
+## Technology
+
+- Kotlin
+- Jetpack Compose and Material 3
+- Room
+- WorkManager
+- Kotlin Coroutines
+- OkHttp for GitHub update checks
